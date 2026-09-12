@@ -1,0 +1,27 @@
+{
+  "metricsDpi": 280,
+  "configDpi": 240,
+  "forceOrientation": true,
+  "backButton": {
+    "enabled": true,
+    "sizeDp": 48,
+    "alpha": 0.5
+  },
+  "roundedCorners": {
+    "enabled": true,
+    "radiusDp": 16
+  },
+  "fullscreen": true,
+  "fontOverride": null,
+  "userAgentOverride": "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+  "mediaBridge": false,
+  "networkBypass": false,
+  "allowCapture": false,
+  "display": true,
+  "rootBypass": false,
+  "emulatorBypass": false,
+  "automotiveFix": false,
+  "simReady": false,
+  "copySign": false,
+  "debug": false
+}

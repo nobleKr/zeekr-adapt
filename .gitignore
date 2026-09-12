@@ -1,0 +1,36 @@
+# Build output
+build/
+
+# Downloaded JARs
+libs/*.jar
+
+# APK artifacts
+*.apk
+
+# Signing keys
+*.keystore
+
+# IntelliJ / Android Studio
+.idea/
+*.iml
+
+# macOS
+.DS_Store
+
+# JVM crash dumps (OpenJ9 d8 runs)
+Snap.*.trc
+core.*.dmp
+javacore.*.txt
+
+# Stray nested copy (old project location)
+dhu-adapter/
+
+# Internal RE notes / protocol docs — not published
+docs/
+
+# Vendored Zeekr SDK smali (no longer used; MediaBridge speaks raw Binder)
+vendor/zeekr-sdk-smali/
+vendor/zeekr-sdk-stub.jar
+
+# Python bytecode
+__pycache__/
