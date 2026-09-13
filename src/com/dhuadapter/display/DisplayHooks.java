@@ -72,6 +72,13 @@ public final class DisplayHooks {
                         if (Boolean.TRUE.equals(IN_RELAX.get())) return;   // nested re-measure — skip
                         android.widget.LinearLayout ll = (android.widget.LinearLayout) f.thisObject;
                         if (ll == null) return;
+                        // relax ONLY fixed-size containers (e.g. 160dp Play pill);
+                        // never match_parent / wrap / weighted rows -> no collateral widening,
+                        // no nested double-relax with a software-layer child.
+                        android.view.ViewGroup.LayoutParams llp = ll.getLayoutParams();
+                        boolean fixedW = llp != null && llp.width  > 0;
+                        boolean fixedH = llp != null && llp.height > 0;
+                        if (!fixedW && !fixedH) return;
                         int wSpec = (int) f.args[0];
                         int hSpec = (int) f.args[1];
                         boolean horizontal =
@@ -88,6 +95,14 @@ public final class DisplayHooks {
                         for (int i = 0; i < n; i++) {
                             View ch = ll.getChildAt(i);
                             if (ch == null || ch.getVisibility() == View.GONE) continue;
+                            // true desired size: children in an EXACTLY parent were
+                            // measured AT_MOST (already clipped) — re-measure UNSPECIFIED.
+                            IN_RELAX.set(Boolean.TRUE);
+                            try {
+                                ch.measure(
+                                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+                                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+                            } finally { IN_RELAX.set(Boolean.FALSE); }
                             int mw = ch.getMeasuredWidth();
                             int mh = ch.getMeasuredHeight();
                             android.view.ViewGroup.LayoutParams lp = ch.getLayoutParams();
@@ -108,10 +123,11 @@ public final class DisplayHooks {
                         boolean wExact = View.MeasureSpec.getMode(wSpec) == View.MeasureSpec.EXACTLY;
                         boolean hExact = View.MeasureSpec.getMode(hSpec) == View.MeasureSpec.EXACTLY;
 
-                        boolean fixW = wExact && needW > haveW && needW <= capW;
-                        boolean fixH = hExact && needH > haveH && needH <= capH;
-                        if (!fixW && !fixH) return;   // fast path: nothing clipped
-
+                        boolean fixW = fixedW && wExact && needW > haveW && needW <= capW;
+                        boolean fixH = fixedH && hExact && needH > haveH && needH <= capH;
+                        // NOTE: children were re-measured UNSPECIFIED above (state clobbered),
+                        // so we must always re-run onMeasure with the final specs (relaxed OR
+                        // original) to leave children consistent with the layout size.
                         int newWSpec = fixW
                                 ? View.MeasureSpec.makeMeasureSpec(needW, View.MeasureSpec.EXACTLY)
                                 : wSpec;
