@@ -42,41 +42,151 @@ public final class DisplayHooks {
         installConfigUpdateFromDensity();
         installEarlyDensityPoints();
         installWidthCapResources();   // phone-UI: rewrite the Configuration the framework uses to SELECT resources
+        installRelaxClippedLinear();  // app-agnostic: relax EXACTLY LinearLayouts that clip their children (e.g. 160dp Play pill)
     }
 
-    // Cap a Configuration's width fields toward phone range so the framework
-    // stops picking tablet resource buckets. Also keeps densityDpi consistent —
-    // so this is a superset of the old density-only transform. gate: phoneUi.
+    // App-agnostic layout relief. Hooks android.widget.LinearLayout.onMeasure
+    // (a pure framework class — no app/resource matching). After the normal
+    // measure pass, if the LinearLayout was given an EXACTLY size smaller than
+    // what its children actually need (they overflow/clip), we re-measure the
+    // group with the needed size instead — bounded by the REAL screen capacity
+    // (its Resources' DisplayMetrics widthPixels/heightPixels at the current
+    // DPI, so the relief is derived from resolution+density, never hardcoded).
+    // Horizontal: needed width = Σ children (measuredWidth+margins). Vertical:
+    // needed height = Σ children. This fixes any fixed-size container that clips
+    // its content at a raised density (e.g. AM's 160dp Play pill) generically.
+    // gate: display + relaxClippedLinear.
+    // Re-entrancy guard: our re-measure calls onMeasure again, which re-enters
+    // this same hook — skip the nested pass.
+    private static final ThreadLocal<Boolean> IN_RELAX = new ThreadLocal<>();
+
+    private static void installRelaxClippedLinear() {
+        if (!HookEnv.config.display || !HookEnv.config.relaxClippedLinear) return;
+        try {
+            Method m = android.widget.LinearLayout.class.getDeclaredMethod(
+                    "onMeasure", int.class, int.class);
+            m.setAccessible(true);
+            Pine.hook(m, new MethodHook() {
+                @Override public void afterCall(Pine.CallFrame f) {
+                    try {
+                        if (Boolean.TRUE.equals(IN_RELAX.get())) return;   // nested re-measure — skip
+                        android.widget.LinearLayout ll = (android.widget.LinearLayout) f.thisObject;
+                        if (ll == null) return;
+                        int wSpec = (int) f.args[0];
+                        int hSpec = (int) f.args[1];
+                        boolean horizontal =
+                                ll.getOrientation() == android.widget.LinearLayout.HORIZONTAL;
+
+                        // screen capacity in px (real resolution ÷ our DPI is already
+                        // baked into these metrics); upper bound so we never blow past screen
+                        DisplayMetrics dm = ll.getResources().getDisplayMetrics();
+                        int capW = (dm != null && dm.widthPixels  > 0) ? dm.widthPixels  : Integer.MAX_VALUE;
+                        int capH = (dm != null && dm.heightPixels > 0) ? dm.heightPixels : Integer.MAX_VALUE;
+
+                        // sum/max of children's needed sizes (measured + margins)
+                        int needW = 0, needH = 0, n = ll.getChildCount();
+                        for (int i = 0; i < n; i++) {
+                            View ch = ll.getChildAt(i);
+                            if (ch == null || ch.getVisibility() == View.GONE) continue;
+                            int mw = ch.getMeasuredWidth();
+                            int mh = ch.getMeasuredHeight();
+                            android.view.ViewGroup.LayoutParams lp = ch.getLayoutParams();
+                            if (lp instanceof android.view.ViewGroup.MarginLayoutParams) {
+                                android.view.ViewGroup.MarginLayoutParams mp =
+                                        (android.view.ViewGroup.MarginLayoutParams) lp;
+                                mw += mp.leftMargin + mp.rightMargin;
+                                mh += mp.topMargin + mp.bottomMargin;
+                            }
+                            if (horizontal) { needW += mw; needH = Math.max(needH, mh); }
+                            else            { needH += mh; needW = Math.max(needW, mw); }
+                        }
+                        needW += ll.getPaddingLeft() + ll.getPaddingRight();
+                        needH += ll.getPaddingTop()  + ll.getPaddingBottom();
+
+                        int haveW = ll.getMeasuredWidth();
+                        int haveH = ll.getMeasuredHeight();
+                        boolean wExact = View.MeasureSpec.getMode(wSpec) == View.MeasureSpec.EXACTLY;
+                        boolean hExact = View.MeasureSpec.getMode(hSpec) == View.MeasureSpec.EXACTLY;
+
+                        boolean fixW = wExact && needW > haveW && needW <= capW;
+                        boolean fixH = hExact && needH > haveH && needH <= capH;
+                        if (!fixW && !fixH) return;   // fast path: nothing clipped
+
+                        int newWSpec = fixW
+                                ? View.MeasureSpec.makeMeasureSpec(needW, View.MeasureSpec.EXACTLY)
+                                : wSpec;
+                        int newHSpec = fixH
+                                ? View.MeasureSpec.makeMeasureSpec(needH, View.MeasureSpec.EXACTLY)
+                                : hSpec;
+                        // re-run the real measure with the relaxed spec(s)
+                        IN_RELAX.set(Boolean.TRUE);
+                        try {
+                            m.invoke(ll, newWSpec, newHSpec);
+                        } finally {
+                            IN_RELAX.set(Boolean.FALSE);
+                        }
+                    } catch (Throwable t) { /* ignore — never break layout */ }
+                }
+            });
+            Log.i(TAG, "Hook installed: LinearLayout.onMeasure relax-clipped (app-agnostic)");
+        } catch (Throwable t) {
+            Log.e(TAG, "Failed to hook LinearLayout.onMeasure", t);
+        }
+    }
+
+    // Density-only Configuration transform for paths WITHOUT paired metrics
+    // (SharedHooks updateFrom / getConfiguration results). Keeps densityDpi
+    // consistent with our single chosen density; the full dp recompute needs
+    // real pixels and happens in recomputeDp (updateConfiguration / pushMetrics).
     private static void capConfig(Configuration c) {
         if (c == null) return;
         c.densityDpi = HookEnv.config.configDpi;
-        if (!HookEnv.config.phoneUi) return;
-        int cap = HookEnv.config.widthDpCap;
-        if (c.screenWidthDp > 0 && c.screenWidthDp > cap) {
-            c.screenWidthDp = cap;
-        }
-        if (c.smallestScreenWidthDp > 0 && c.smallestScreenWidthDp > cap) {
-            c.smallestScreenWidthDp = cap;
-        }
     }
 
-    // Lower DisplayMetrics.widthPixels so widthPixels-based code (e.g.
-    // useWidescreenLayout() > ~700dp) goes phone → fixes the oversized album
-    // Play button. Only from the Resources.getDisplayMetrics path. gate: phoneUi+capMetricsWidth.
-    static void capMetricsWidth(DisplayMetrics dm) {
-        if (dm == null || !HookEnv.config.phoneUi || !HookEnv.config.capMetricsWidth) return;
-        int capPx = Math.round(HookEnv.config.widthDpCap * (HookEnv.config.metricsDpi / 160f));
-        if (dm.widthPixels > capPx) {
-            dm.widthPixels = capPx;
-        }
+    // Recompute the Configuration's dp dimensions for OUR single density
+    // (configDpi == metricsDpi), dynamically from the screen — no hardcoded dp,
+    // NO phone cap (native tablet layout preserved).
+    //
+    // Non-fullscreen aware: the system bars (status/navigation) eat part of the
+    // height when fullscreen=false, so screenHeightDp is NOT widthPixels-style
+    // "full pixels / density" — the framework already subtracted the bars. We
+    // must preserve that subtraction. So:
+    //   • WIDTH: no side bars in landscape → recompute from full widthPixels.
+    //   • HEIGHT: take the framework's already-bars-excluded screenHeightDp and
+    //     rescale it by the density ratio (stock density that produced it →
+    //     ours), instead of dividing raw heightPixels (which would ignore the
+    //     bars and push content under them).
+    // Recompute BOTH dp dimensions for OUR single density (configDpi ==
+    // metricsDpi), dynamically from the screen's REAL USABLE capacity — no
+    // hardcoded dp, NO phone cap (native tablet layout preserved).
+    //
+    // Fullscreen-aware by construction: the DisplayMetrics handed to
+    // ResourcesImpl.updateConfiguration carry widthPixels/heightPixels for the
+    // CURRENT usable window area — the framework already accounts for the
+    // system bars, so these pixels SHRINK when fullscreen=false and GROW back
+    // when fullscreen=true. Dividing them by our density therefore yields dp
+    // that track the real capacity on every config change (including a
+    // fullscreen toggle or a bar show/hide), which is exactly what we want.
+    //   screenWidthDp  = usableWidthPx  / density
+    //   screenHeightDp = usableHeightPx / density
+    private static void recomputeDp(Configuration c, DisplayMetrics dm) {
+        if (c == null) return;
+        c.densityDpi = HookEnv.config.configDpi;                 // impose our density
+        if (dm == null || dm.widthPixels <= 0 || dm.heightPixels <= 0) return;
+        float ourDensity = HookEnv.config.configDpi / 160f;      // Android: density = densityDpi / 160
+        int wDp = Math.round(dm.widthPixels  / ourDensity);      // usable width  → dp
+        int hDp = Math.round(dm.heightPixels / ourDensity);      // usable height → dp
+        c.screenWidthDp  = wDp;
+        c.screenHeightDp = hDp;
+        c.smallestScreenWidthDp = Math.min(wDp, hDp);
     }
 
     // THE KEY HOOK — ResourcesImpl.updateConfiguration builds the ResTable_config
     // the framework uses to SELECT resource buckets (values-w####dp / sw###dp).
-    // Our getConfiguration afterCall only changes what app CODE reads, not the
-    // bucket choice — so cap width here to force phone buckets.
+    // We rewrite the dp dimensions here to match OUR density, dynamically from
+    // the paired real DisplayMetrics — no phone cap, tablet layout preserved.
     private static void installWidthCapResources() {
-        if (!HookEnv.config.phoneUi) return;
+        if (!HookEnv.config.display) return;
         try {
             Class<?> impl = Class.forName("android.content.res.ResourcesImpl");
             Class<?> compat = Class.forName("android.content.res.CompatibilityInfo");
@@ -86,17 +196,18 @@ public final class DisplayHooks {
             Pine.hook(m, new MethodHook() {
                 @Override public void beforeCall(Pine.CallFrame f) {
                     try {
-                        if (f.args != null && f.args.length > 0 && f.args[0] instanceof Configuration) {
-                            capConfig((Configuration) f.args[0]);
-                        }
-                        if (f.args != null && f.args.length > 1 && f.args[1] instanceof DisplayMetrics) {
-                            capMetricsWidth((DisplayMetrics) f.args[1]);
+                        Configuration cfg = (f.args != null && f.args.length > 0 && f.args[0] instanceof Configuration)
+                                ? (Configuration) f.args[0] : null;
+                        DisplayMetrics dm = (f.args != null && f.args.length > 1 && f.args[1] instanceof DisplayMetrics)
+                                ? (DisplayMetrics) f.args[1] : null;
+                        if (cfg != null) {
+                            recomputeDp(cfg, dm);   // dynamic dp from real px ÷ our density
                         }
                     } catch (Throwable t) { /* ignore */ }
                 }
             });
-            Log.i(TAG, "Hook installed: ResourcesImpl.updateConfiguration width cap → "
-                    + HookEnv.config.widthDpCap + "dp");
+            Log.i(TAG, "Hook installed: ResourcesImpl.updateConfiguration dynamic dp @ "
+                    + HookEnv.config.configDpi + "dpi");
         } catch (Throwable t) {
             Log.e(TAG, "Failed to hook ResourcesImpl.updateConfiguration", t);
         }
@@ -165,10 +276,9 @@ public final class DisplayHooks {
             android.content.res.Resources res = ctx.getResources();
             if (res == null) return;
             scaleMetrics(res.getDisplayMetrics(), HookEnv.config.metricsDpi);
-            capMetricsWidth(res.getDisplayMetrics());
             android.content.res.Configuration cfg = res.getConfiguration();
             if (cfg != null) {
-                capConfig(cfg);
+                recomputeDp(cfg, res.getDisplayMetrics());
             }
         } catch (Throwable t) { /* ignore — afterCall hooks remain the primary path */ }
     }
@@ -194,7 +304,6 @@ public final class DisplayHooks {
                 public void afterCall(Pine.CallFrame callFrame) {
                     try {
                         scaleMetrics((DisplayMetrics) callFrame.getResult(), HookEnv.config.metricsDpi);
-                        capMetricsWidth((DisplayMetrics) callFrame.getResult());
                     } catch (Exception e) { /* ignore */ }
                 }
             });
