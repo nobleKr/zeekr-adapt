@@ -71,6 +71,7 @@ F_EMULATOR_BYPASS=""
 F_AUTOMOTIVE_FIX=""
 F_SIM_READY=""
 F_COPY_SIGN=""
+F_PHONE_UI=""
 COPY_SIGN=false
 
 while [[ $# -gt 0 ]]; do
@@ -90,6 +91,8 @@ while [[ $# -gt 0 ]]; do
         --automotive-fix) F_AUTOMOTIVE_FIX=true; shift ;;
         --sim-ready) F_SIM_READY=true; shift ;;
         --copy-sign) F_COPY_SIGN=true; COPY_SIGN=true; shift ;;
+        --phone-ui) F_PHONE_UI=true; shift ;;
+        --no-phone-ui) F_PHONE_UI=false; shift ;;
         --debug) F_DEBUG=true; shift ;;
         --metrics-dpi) F_METRICS_DPI="$2"; shift 2 ;;
         --config-dpi) F_CONFIG_DPI="$2"; shift 2 ;;
@@ -122,6 +125,10 @@ Flags override the defaults from config.json for THIS patch only:
                         from its v2/v3 signing block into assets/orig-cert.der and
                         feed it to the app's signature self-check (Spotify). No
                         hardcoded cert.
+  --phone-ui            Cap screen width to phone range (default 411dp) so an
+                        ultrawide DHU (2560px) stops picking TABLET layouts —
+                        oversized buttons, iPad-style bottom bar, bloated dialogs.
+                        Per-app (e.g. Apple Music). Tune width with the config.
   --debug               enable debug logging
   --metrics-dpi <n>     rendering DPI (default 280)
   --config-dpi <n>      layout DPI (default 240)
@@ -157,6 +164,7 @@ if [[ -z "$CONFIG_JSON" ]]; then
     F_EMULATOR_BYPASS="$F_EMULATOR_BYPASS" F_AUTOMOTIVE_FIX="$F_AUTOMOTIVE_FIX" \
     F_SIM_READY="$F_SIM_READY" \
     F_COPY_SIGN="$F_COPY_SIGN" \
+    F_PHONE_UI="$F_PHONE_UI" \
     python3 - "$BASE_CONFIG" "$GEN_CONFIG" <<'PYEOF'
 import json, os, sys
 base, out = sys.argv[1], sys.argv[2]
@@ -180,12 +188,13 @@ setb("F_EMULATOR_BYPASS", "emulatorBypass")
 setb("F_AUTOMOTIVE_FIX", "automotiveFix")
 setb("F_SIM_READY", "simReady")
 setb("F_COPY_SIGN", "copySign")
+setb("F_PHONE_UI", "phoneUi")
 seti("F_METRICS_DPI", "metricsDpi")
 seti("F_CONFIG_DPI", "configDpi")
 json.dump(c, open(out, "w"), indent=2)
 print("Generated embedded config:", {k: c.get(k) for k in
       ("display","rootBypass","emulatorBypass","automotiveFix",
-       "mediaBridge","networkBypass","simReady","allowCapture","copySign",
+       "mediaBridge","networkBypass","simReady","allowCapture","copySign","phoneUi",
        "forceOrientation","fullscreen","debug","metricsDpi","configDpi")})
 PYEOF
     CONFIG_JSON="$GEN_CONFIG"

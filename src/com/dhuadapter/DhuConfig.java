@@ -65,7 +65,7 @@ public final class DhuConfig {
     // album Play button, iPad-style bottom bar, bloated dialogs). We only fixed
     // densityDpi before, not screenWidthDp — so cap the width the framework uses
     // to SELECT resources back into phone range.
-    public boolean phoneUi = true;          // master switch for the width cap
+    public boolean phoneUi = false;         // master switch for the width cap (opt-in: --phone-ui)
     public int     widthDpCap = 411;        // cap screenWidthDp/smallestScreenWidthDp
                                             //  <600 → is_tablet=false, <640 → no tablet-multiply
                                             //  411 = Pixel-class; tune 411..599
