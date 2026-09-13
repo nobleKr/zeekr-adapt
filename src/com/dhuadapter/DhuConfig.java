@@ -59,6 +59,21 @@ public final class DhuConfig {
     // genuine PKCS#7 block is read from the APK's own assets at runtime.
     public boolean copySign = false;
 
+    // Category 1 (phone-UI width cap) — the ultrawide DHU (2560px) makes the
+    // framework pick TABLET resource buckets (values-sw600dp/w640dp → is_tablet,
+    // multiply_tablet_layout_enabled) and apps take widescreen layouts (oversized
+    // album Play button, iPad-style bottom bar, bloated dialogs). We only fixed
+    // densityDpi before, not screenWidthDp — so cap the width the framework uses
+    // to SELECT resources back into phone range.
+    public boolean phoneUi = true;          // master switch for the width cap
+    public int     widthDpCap = 411;        // cap screenWidthDp/smallestScreenWidthDp
+                                            //  <600 → is_tablet=false, <640 → no tablet-multiply
+                                            //  411 = Pixel-class; tune 411..599
+    public boolean capMetricsWidth = true;  // also lower DisplayMetrics.widthPixels so
+                                            //  widthPixels-based code (useWidescreenLayout)
+                                            //  goes phone → fixes the Play button
+    public boolean forceTabletBoolsFalse = true; // belt&suspenders getBoolean fallback
+
     // Font scale multiplier (used by scaledDensity(), default 1.5 = 150% text)
     public float fontScale = 1.5f;
 
@@ -216,6 +231,10 @@ public final class DhuConfig {
             cfg.automotiveFix = json.optBoolean("automotiveFix", cfg.automotiveFix);
             cfg.simReady = json.optBoolean("simReady", cfg.simReady);
             cfg.copySign = json.optBoolean("copySign", cfg.copySign);
+            cfg.phoneUi = json.optBoolean("phoneUi", cfg.phoneUi);
+            cfg.widthDpCap = json.optInt("widthDpCap", cfg.widthDpCap);
+            cfg.capMetricsWidth = json.optBoolean("capMetricsWidth", cfg.capMetricsWidth);
+            cfg.forceTabletBoolsFalse = json.optBoolean("forceTabletBoolsFalse", cfg.forceTabletBoolsFalse);
 
             if (!json.isNull("fontOverride")) {
                 cfg.fontOverride = json.optString("fontOverride", null);

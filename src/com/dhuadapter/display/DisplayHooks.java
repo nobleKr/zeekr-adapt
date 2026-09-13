@@ -41,17 +41,100 @@ public final class DisplayHooks {
         installWebViewZoomHook();
         installConfigUpdateFromDensity();
         installEarlyDensityPoints();
+        installWidthCapResources();   // phone-UI: rewrite the Configuration the framework uses to SELECT resources
+        installTabletBoolHook();      // phone-UI: optional getBoolean fallback for tablet flags
     }
 
-    // Category 1 contribution to the SHARED Configuration.updateFrom hook: force
-    // configDpi so a system config update doesn't override our layout density.
-    // Registered via SharedHooks (single hook shared with Category 4's deCar) —
-    // NOT a second Pine hook on updateFrom.
+    // Cap a Configuration's width fields toward phone range so the framework
+    // stops picking tablet resource buckets. Also keeps densityDpi consistent —
+    // so this is a superset of the old density-only transform. gate: phoneUi.
+    private static void capConfig(Configuration c) {
+        if (c == null) return;
+        c.densityDpi = HookEnv.config.configDpi;
+        if (!HookEnv.config.phoneUi) return;
+        int cap = HookEnv.config.widthDpCap;
+        if (c.screenWidthDp > 0 && c.screenWidthDp > cap) {
+            c.screenWidthDp = cap;
+        }
+        if (c.smallestScreenWidthDp > 0 && c.smallestScreenWidthDp > cap) {
+            c.smallestScreenWidthDp = cap;
+        }
+    }
+
+    // Lower DisplayMetrics.widthPixels so widthPixels-based code (e.g.
+    // useWidescreenLayout() > ~700dp) goes phone → fixes the oversized album
+    // Play button. Only from the Resources.getDisplayMetrics path. gate: phoneUi+capMetricsWidth.
+    static void capMetricsWidth(DisplayMetrics dm) {
+        if (dm == null || !HookEnv.config.phoneUi || !HookEnv.config.capMetricsWidth) return;
+        int capPx = Math.round(HookEnv.config.widthDpCap * (HookEnv.config.metricsDpi / 160f));
+        if (dm.widthPixels > capPx) {
+            dm.widthPixels = capPx;
+        }
+    }
+
+    // THE KEY HOOK — ResourcesImpl.updateConfiguration builds the ResTable_config
+    // the framework uses to SELECT resource buckets (values-w####dp / sw###dp).
+    // Our getConfiguration afterCall only changes what app CODE reads, not the
+    // bucket choice — so cap width here to force phone buckets.
+    private static void installWidthCapResources() {
+        if (!HookEnv.config.phoneUi) return;
+        try {
+            Class<?> impl = Class.forName("android.content.res.ResourcesImpl");
+            Class<?> compat = Class.forName("android.content.res.CompatibilityInfo");
+            Method m = impl.getDeclaredMethod("updateConfiguration",
+                    Configuration.class, DisplayMetrics.class, compat);
+            m.setAccessible(true);
+            Pine.hook(m, new MethodHook() {
+                @Override public void beforeCall(Pine.CallFrame f) {
+                    try {
+                        if (f.args != null && f.args.length > 0 && f.args[0] instanceof Configuration) {
+                            capConfig((Configuration) f.args[0]);
+                        }
+                        if (f.args != null && f.args.length > 1 && f.args[1] instanceof DisplayMetrics) {
+                            capMetricsWidth((DisplayMetrics) f.args[1]);
+                        }
+                    } catch (Throwable t) { /* ignore */ }
+                }
+            });
+            Log.i(TAG, "Hook installed: ResourcesImpl.updateConfiguration width cap → "
+                    + HookEnv.config.widthDpCap + "dp");
+        } catch (Throwable t) {
+            Log.e(TAG, "Failed to hook ResourcesImpl.updateConfiguration", t);
+        }
+    }
+
+    // Optional fallback: force the tablet bool resources false by name (version-stable).
+    private static void installTabletBoolHook() {
+        if (!HookEnv.config.phoneUi || !HookEnv.config.forceTabletBoolsFalse) return;
+        try {
+            Pine.hook(android.content.res.Resources.class.getMethod("getBoolean", int.class), new MethodHook() {
+                @Override public void afterCall(Pine.CallFrame f) {
+                    try {
+                        if (!Boolean.TRUE.equals(f.getResult())) return;
+                        android.content.res.Resources res = (android.content.res.Resources) f.thisObject;
+                        String name = res.getResourceEntryName((int) f.args[0]);
+                        if ("is_tablet".equals(name)
+                                || "multiply_tablet_layout_enabled".equals(name)
+                                || "artist_tablet_layout_enabled".equals(name)) {
+                            f.setResult(Boolean.FALSE);
+                        }
+                    } catch (Throwable t) { /* ignore */ }
+                }
+            });
+            Log.i(TAG, "Hook installed: Resources.getBoolean tablet flags → false");
+        } catch (Throwable t) {
+            Log.e(TAG, "Failed to hook Resources.getBoolean", t);
+        }
+    }
+
+    // Category 1 contribution to the SHARED Configuration.updateFrom hook: cap
+    // width toward phone + force configDpi. Registered via SharedHooks (single
+    // hook shared with Category 4's deCar) — NOT a second Pine hook on updateFrom.
     private static void installConfigUpdateFromDensity() {
         com.dhuadapter.core.SharedHooks.registerConfigTransform(
                 com.dhuadapter.core.SharedHooks.CONFIG_UPDATE_FROM,
-                cfg -> cfg.densityDpi = HookEnv.config.configDpi);
-        Log.i(TAG, "Registered: Configuration.updateFrom densityDpi (via SharedHooks)");
+                DisplayHooks::capConfig);
+        Log.i(TAG, "Registered: Configuration.updateFrom width-cap + densityDpi (via SharedHooks)");
     }
 
     // Early density points: apply metrics BEFORE Application.onCreate and on the
@@ -106,9 +189,10 @@ public final class DisplayHooks {
             android.content.res.Resources res = ctx.getResources();
             if (res == null) return;
             scaleMetrics(res.getDisplayMetrics(), HookEnv.config.metricsDpi);
+            capMetricsWidth(res.getDisplayMetrics());
             android.content.res.Configuration cfg = res.getConfiguration();
             if (cfg != null) {
-                cfg.densityDpi = HookEnv.config.configDpi;
+                capConfig(cfg);
             }
         } catch (Throwable t) { /* ignore — afterCall hooks remain the primary path */ }
     }
@@ -134,6 +218,7 @@ public final class DisplayHooks {
                 public void afterCall(Pine.CallFrame callFrame) {
                     try {
                         scaleMetrics((DisplayMetrics) callFrame.getResult(), HookEnv.config.metricsDpi);
+                        capMetricsWidth((DisplayMetrics) callFrame.getResult());
                     } catch (Exception e) { /* ignore */ }
                 }
             });
@@ -183,8 +268,8 @@ public final class DisplayHooks {
         // (afterCall sets densityDpi) instead of hooking the method directly — so it
         // is composited with any other category that needs getConfiguration, hooked once.
         com.dhuadapter.core.SharedHooks.registerConfigResultTransform(
-                cfg -> cfg.densityDpi = HookEnv.config.configDpi);
-        Log.i(TAG, "Registered: Resources.getConfiguration densityDpi (via SharedHooks)");
+                DisplayHooks::capConfig);
+        Log.i(TAG, "Registered: Resources.getConfiguration width-cap + densityDpi (via SharedHooks)");
     }
 
     private static void installSetRequestedOrientationHook() {

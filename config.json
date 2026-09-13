@@ -23,5 +23,9 @@
   "automotiveFix": false,
   "simReady": false,
   "copySign": false,
+  "phoneUi": true,
+  "widthDpCap": 411,
+  "capMetricsWidth": true,
+  "forceTabletBoolsFalse": true,
   "debug": false
 }
