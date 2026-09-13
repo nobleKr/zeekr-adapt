@@ -72,7 +72,6 @@ public final class DhuConfig {
     public boolean capMetricsWidth = true;  // also lower DisplayMetrics.widthPixels so
                                             //  widthPixels-based code (useWidescreenLayout)
                                             //  goes phone → fixes the Play button
-    public boolean forceTabletBoolsFalse = true; // belt&suspenders getBoolean fallback
 
     // Font scale multiplier (used by scaledDensity(), default 1.5 = 150% text)
     public float fontScale = 1.5f;
@@ -234,7 +233,6 @@ public final class DhuConfig {
             cfg.phoneUi = json.optBoolean("phoneUi", cfg.phoneUi);
             cfg.widthDpCap = json.optInt("widthDpCap", cfg.widthDpCap);
             cfg.capMetricsWidth = json.optBoolean("capMetricsWidth", cfg.capMetricsWidth);
-            cfg.forceTabletBoolsFalse = json.optBoolean("forceTabletBoolsFalse", cfg.forceTabletBoolsFalse);
 
             if (!json.isNull("fontOverride")) {
                 cfg.fontOverride = json.optString("fontOverride", null);

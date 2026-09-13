@@ -42,7 +42,6 @@ public final class DisplayHooks {
         installConfigUpdateFromDensity();
         installEarlyDensityPoints();
         installWidthCapResources();   // phone-UI: rewrite the Configuration the framework uses to SELECT resources
-        installTabletBoolHook();      // phone-UI: optional getBoolean fallback for tablet flags
     }
 
     // Cap a Configuration's width fields toward phone range so the framework
@@ -104,29 +103,6 @@ public final class DisplayHooks {
     }
 
     // Optional fallback: force the tablet bool resources false by name (version-stable).
-    private static void installTabletBoolHook() {
-        if (!HookEnv.config.phoneUi || !HookEnv.config.forceTabletBoolsFalse) return;
-        try {
-            Pine.hook(android.content.res.Resources.class.getMethod("getBoolean", int.class), new MethodHook() {
-                @Override public void afterCall(Pine.CallFrame f) {
-                    try {
-                        if (!Boolean.TRUE.equals(f.getResult())) return;
-                        android.content.res.Resources res = (android.content.res.Resources) f.thisObject;
-                        String name = res.getResourceEntryName((int) f.args[0]);
-                        if ("is_tablet".equals(name)
-                                || "multiply_tablet_layout_enabled".equals(name)
-                                || "artist_tablet_layout_enabled".equals(name)) {
-                            f.setResult(Boolean.FALSE);
-                        }
-                    } catch (Throwable t) { /* ignore */ }
-                }
-            });
-            Log.i(TAG, "Hook installed: Resources.getBoolean tablet flags → false");
-        } catch (Throwable t) {
-            Log.e(TAG, "Failed to hook Resources.getBoolean", t);
-        }
-    }
-
     // Category 1 contribution to the SHARED Configuration.updateFrom hook: cap
     // width toward phone + force configDpi. Registered via SharedHooks (single
     // hook shared with Category 4's deCar) — NOT a second Pine hook on updateFrom.

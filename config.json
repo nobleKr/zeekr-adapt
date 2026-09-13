@@ -26,6 +26,5 @@
   "phoneUi": false,
   "widthDpCap": 411,
   "capMetricsWidth": true,
-  "forceTabletBoolsFalse": true,
   "debug": false
 }
