@@ -91,13 +91,6 @@ public final class DhuConfig {
     // Fullscreen
     public boolean fullscreen = false;
 
-    // App-agnostic layout relief: when a LinearLayout is given an EXACTLY size
-    // (width or height) smaller than the sum/max of its children's desired
-    // sizes, relax that dimension to fit — fixes fixed-size containers (e.g. a
-    // 160dp Play pill) that clip their content at a raised density. Pure
-    // android.widget.LinearLayout hook, no app-specific matching. Off by default.
-    public boolean relaxClippedLinear = false;
-
     // Font override (asset path relative to assets/fonts/, null = no override)
     public String fontOverride = null;
 
@@ -227,7 +220,6 @@ public final class DhuConfig {
             cfg.fontScale = (float) json.optDouble("fontScale", cfg.fontScale);
             cfg.forceOrientation = json.optBoolean("forceOrientation", cfg.forceOrientation);
             cfg.fullscreen = json.optBoolean("fullscreen", cfg.fullscreen);
-            cfg.relaxClippedLinear = json.optBoolean("relaxClippedLinear", cfg.relaxClippedLinear);
             cfg.debug = json.optBoolean("debug", cfg.debug);
             cfg.mediaBridge = json.optBoolean("mediaBridge", cfg.mediaBridge);
             cfg.networkBypass = json.optBoolean("networkBypass", cfg.networkBypass);

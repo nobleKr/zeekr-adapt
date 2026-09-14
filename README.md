@@ -12,14 +12,44 @@ Zeekr DHU (and similar) have high-res screens (2560×1600) reporting low density
 
 **No root. No Xposed. No system modifications.**
 
-### Two-DPI density (rendering vs layout)
+### Coherent single-DPI density + dynamic dp recompute
 
-Unlike a naive ×2 density (which breaks layouts on wide screens), zeekr-adapt splits density:
+The DHU panel reports a low density (MDPI 160dpi = density 1.0) on a large
+screen, so stock apps render microscopic UI. zeekr-adapt raises the density the
+app perceives, keeping **one coherent density** for both rendering and layout:
 
-- **metricsDpi** (default **280**) → `Resources.getDisplayMetrics` / `Display.getMetrics` / `getRealMetrics` (afterCall) — drives **rendering** size (large, readable UI).
-- **configDpi** (default **240**) → `Resources.getConfiguration` (afterCall) — drives **layout** width (more `dp` so elements still fit).
+- **metricsDpi** and **configDpi** are set to the **same** value (default
+  **280** = ×1.75). A split density (different metrics vs config) was tried and
+  removed — it desynchronised rendering from resource/layout selection and broke
+  fixed-size views (e.g. Apple Music's `KnockoutButton` clipped its label). A
+  reference run on a real Pixel C (2560×1800 @ 320dpi, single coherent density)
+  renders those apps perfectly, confirming a single DPI is correct.
 
-Pure `afterCall` mutation — the config callback touches only `densityDpi`, never `screenWidthDp`/`smallestScreenWidthDp`, and there is no `updateConfiguration` / global Resources rewrite.
+- **`recomputeDp`** keeps the whole `Configuration` consistent with the imposed
+  density. Hooked on `ResourcesImpl.updateConfiguration` (and an early
+  `pushMetrics` pass), it recomputes, using Android's own formula, from the
+  **real usable pixels** the framework hands it:
+  ```
+  screenWidthDp        = usableWidthPx  / density
+  screenHeightDp       = usableHeightPx / density
+  smallestScreenWidthDp = min(screenWidthDp, screenHeightDp)
+  ```
+  Because those pixels are the *usable* window area, the dp track the real
+  capacity dynamically — including when the system bars appear/disappear
+  (fullscreen on/off). No hardcoded dp, and **no width cap**: the app keeps its
+  native (tablet) layout, just scaled to a readable density. `DisplayMetrics`
+  keeps its real `widthPixels`/`heightPixels` so the app still fills the screen.
+
+- `fullscreen` is **off by default** (system bars visible); `recomputeDp`
+  accounts for the reserved bar space via the usable-pixel derivation above.
+
+**Project rule (see [CLAUDE.md](CLAUDE.md)):** every hook targets ONLY public
+Android framework APIs (`Resources`, `Display`, `Configuration`,
+`ResourcesImpl.updateConfiguration`, `WebView`, `Activity`, `View`, …). The
+target app is a black box — no app package/class/resource/id, no edits to its
+code or layouts, no baked-in permissions. Everything derives from live device
+metrics.
+
 
 > **End-user guide:** to go from a Play Store app to a patched DHU APK (get a
 > token → download with apkeep → merge → patch → install), see

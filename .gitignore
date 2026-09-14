@@ -34,3 +34,4 @@ vendor/zeekr-sdk-stub.jar
 
 # Python bytecode
 __pycache__/
+CLAUDE.md
