@@ -5,6 +5,7 @@ import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.content.res.Configuration;
 import android.graphics.Typeface;
+import android.os.Build;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Display;
@@ -53,30 +54,18 @@ public final class DisplayHooks {
         c.densityDpi = HookEnv.config.configDpi;
     }
 
-    // Recompute the Configuration's dp dimensions for OUR single density
-    // (configDpi == metricsDpi), dynamically from the screen — no hardcoded dp,
-    // NO phone cap (native tablet layout preserved).
-    //
-    // Non-fullscreen aware: the system bars (status/navigation) eat part of the
-    // height when fullscreen=false, so screenHeightDp is NOT widthPixels-style
-    // "full pixels / density" — the framework already subtracted the bars. We
-    // must preserve that subtraction. So:
-    //   • WIDTH: no side bars in landscape → recompute from full widthPixels.
-    //   • HEIGHT: take the framework's already-bars-excluded screenHeightDp and
-    //     rescale it by the density ratio (stock density that produced it →
-    //     ours), instead of dividing raw heightPixels (which would ignore the
-    //     bars and push content under them).
     // Recompute BOTH dp dimensions for OUR single density (configDpi ==
-    // metricsDpi), dynamically from the screen's REAL USABLE capacity — no
+    // metricsDpi), dynamically from the CURRENT window's real size — no
     // hardcoded dp, NO phone cap (native tablet layout preserved).
     //
-    // Fullscreen-aware by construction: the DisplayMetrics handed to
-    // ResourcesImpl.updateConfiguration carry widthPixels/heightPixels for the
-    // CURRENT usable window area — the framework already accounts for the
-    // system bars, so these pixels SHRINK when fullscreen=false and GROW back
-    // when fullscreen=true. Dividing them by our density therefore yields dp
-    // that track the real capacity on every config change (including a
-    // fullscreen toggle or a bar show/hide), which is exactly what we want.
+    // Windowed-mode aware (e.g. a car launcher running the app in a resized /
+    // freeform / docked window): prefer WindowManager.getCurrentWindowMetrics()
+    // .getBounds() (API 30+), which reflects the actual WINDOW size, over
+    // DisplayMetrics (which on some builds reports the whole DISPLAY, not the
+    // window). We take the SMALLER of the two per axis: if the window == full
+    // screen they are equal (no change); if the launcher gave a narrower/shorter
+    // window, the window bounds win, so screenWidthDp/screenHeightDp track the
+    // real window. Fullscreen-aware too: bounds/metrics shrink with the bars.
     //   screenWidthDp  = usableWidthPx  / density
     //   screenHeightDp = usableHeightPx / density
     private static void recomputeDp(Configuration c, DisplayMetrics dm) {
@@ -84,8 +73,31 @@ public final class DisplayHooks {
         c.densityDpi = HookEnv.config.configDpi;                 // impose our density
         if (dm == null || dm.widthPixels <= 0 || dm.heightPixels <= 0) return;
         float ourDensity = HookEnv.config.configDpi / 160f;      // Android: density = densityDpi / 160
-        int wDp = Math.round(dm.widthPixels  / ourDensity);      // usable width  → dp
-        int hDp = Math.round(dm.heightPixels / ourDensity);      // usable height → dp
+
+        int wPx = dm.widthPixels;
+        int hPx = dm.heightPixels;
+
+        // Prefer current WINDOW bounds when they are smaller (windowed / resized).
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && HookEnv.appContext != null) {
+                android.view.WindowManager wm =
+                        HookEnv.appContext.getSystemService(android.view.WindowManager.class);
+                if (wm != null) {
+                    android.view.WindowMetrics wmet = wm.getCurrentWindowMetrics();
+                    if (wmet != null) {
+                        android.graphics.Rect b = wmet.getBounds();
+                        int bw = b.width(), bh = b.height();
+                        // take the smaller per axis: full-screen -> equal (no-op);
+                        // launcher window -> window bounds are smaller and win.
+                        if (bw > 0 && bw < wPx) wPx = bw;
+                        if (bh > 0 && bh < hPx) hPx = bh;
+                    }
+                }
+            }
+        } catch (Throwable ignore) { /* fall back to DisplayMetrics */ }
+
+        int wDp = Math.round(wPx / ourDensity);                  // window width  → dp
+        int hDp = Math.round(hPx / ourDensity);                  // window height → dp
         c.screenWidthDp  = wDp;
         c.screenHeightDp = hDp;
         c.smallestScreenWidthDp = Math.min(wDp, hDp);

@@ -40,6 +40,8 @@ public final class LifecycleHooks {
                 try {
                     if (HookEnv.config.fullscreen) {
                         applyFullscreen(activity);
+                    } else {
+                        applyInsetFit(activity);   // reserve system-bar space so content isn't under the nav bar
                     }
                     if (HookEnv.config.roundedCornersEnabled) {
                         applyRoundedCorners(activity);
@@ -60,6 +62,8 @@ public final class LifecycleHooks {
                 try {
                     if (HookEnv.config.fullscreen) {
                         applyFullscreen(activity);
+                    } else {
+                        applyInsetFit(activity);   // reserve system-bar space (nav bar) on resume
                     }
                     // Attach back button on resume (not create) to avoid
                     // WindowLeaked on splash activities that finish() immediately.
@@ -130,6 +134,41 @@ public final class LifecycleHooks {
             }
         });
         Log.i(TAG, "ActivityLifecycleCallbacks registered");
+    }
+
+    // Non-fullscreen counterpart of applyFullscreen: make the window's decor
+    // FIT the system bars, so content (e.g. Waze's "Where to?" bottom sheet) is
+    // laid out ABOVE the nav bar instead of drawing under it. Many apps declare
+    // an edge-to-edge window (DRAWS_SYSTEM_BAR_BACKGROUNDS); this reverses that.
+    // Pure android.view.Window framework API — no app code touched.
+    private static void applyInsetFit(Activity activity) {
+        try {
+            Window window = activity.getWindow();
+            if (window == null) return;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                // API 30+: decor fits system windows → content insets reserve the bars
+                window.setDecorFitsSystemWindows(true);
+                View decorView = window.getDecorView();
+                WindowInsetsController controller = decorView.getWindowInsetsController();
+                if (controller != null) {
+                    // ensure the bars are shown (we are NOT hiding them here)
+                    controller.show(WindowInsets.Type.statusBars()
+                            | WindowInsets.Type.navigationBars());
+                }
+            } else {
+                // API 28-29: clear the edge-to-edge layout flags so the view
+                // hierarchy is inset by the system bars.
+                View decorView = window.getDecorView();
+                decorView.setSystemUiVisibility(
+                        decorView.getSystemUiVisibility()
+                                & ~View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                                & ~View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                                & ~View.SYSTEM_UI_FLAG_FULLSCREEN
+                                & ~View.SYSTEM_UI_FLAG_HIDE_NAVIGATION);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "applyInsetFit error", e);
+        }
     }
 
     private static void applyFullscreen(Activity activity) {
