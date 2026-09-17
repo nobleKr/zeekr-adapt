@@ -159,7 +159,7 @@ Hooks are grouped into **8 feature categories**, each gated by an explicit flag.
 
 | # | Category | Flag | Default | What it does |
 |---|----------|------|---------|--------------|
-| 1 | **Display / UI** | on; `--no-display` to disable | **ON** | two-DPI density (280/240), landscape, fullscreen, rounded corners, draggable back button, zero inset padding, font override, WebView zoom + Chrome UA |
+| 1 | **Display / UI** | on; `--no-display` to disable | **ON** | two-DPI density (280/240), landscape, fullscreen, rounded corners, draggable back button + in-app settings panel, zero inset padding, font override, WebView zoom + Chrome UA |
 | 2 | **Root bypass** | `--root-bypass` | off | `Build.TAGS`→release-keys, `File.exists`, `Runtime.exec`, `ProcessBuilder`, `PackageManager` + root `SystemProperties` |
 | 3 | **Emulator bypass** | `--emulator-bypass` | off | de-genericise `Build.*` + qemu/goldfish `SystemProperties` — **emulator only**, dead weight on a real DHU |
 | 4 | **Automotive** | `--automotive-fix` | off | `isAutomotiveOS`→false (blank-screen fix) + block Android Auto overlay + `hasSystemFeature(automotive)`→false + `UiModeManager`→NORMAL + `Configuration.uiMode` de-car |
@@ -251,7 +251,7 @@ Density/UI:
 | `Activity.setRequestedOrientation` | block portrait lock (flag) |
 | `View.onAttachedToWindow` | optional font override |
 | `View.setPaddingRelative` | zero system inset padding |
-| Fullscreen + rounded corners + draggable back button | via ActivityLifecycleCallbacks (flags) |
+| Fullscreen + rounded corners + draggable back button / settings panel | via ActivityLifecycleCallbacks (flags) |
 | `WebView.getSettings` / `getDefaultUserAgent` | text zoom + Chrome mobile UA (fixes web-rendered map flows) |
 
 Compatibility / integration:
@@ -272,6 +272,46 @@ Compatibility / integration:
 `Resources.getConfiguration`, `SystemProperties.get`) are routed through a single
 `core.SharedHooks` dispatcher — each is hooked **exactly once** and every
 category's contribution is composited in order, so no method is double-hooked.
+
+## Floating button & settings panel
+
+With `backButton.enabled: true` (default), every activity gets a draggable
+floating button. Two modes, selected by `backButton.onlySettings`:
+
+| Mode | Looks like | Tap | Long-press (2 s) | Drag |
+|------|-----------|-----|------------------|------|
+| `onlySettings: false` (default) | colored circle + back arrow | back | settings menu | reposition (persisted) |
+| `onlySettings: true` | circle with the current **metricsDpi** as digits | settings menu | settings menu | reposition (persisted) |
+
+The button color, size (`sizeDp` 24–96) and transparency (`alpha` 0.05–1.0) come
+from the same `backButton` config object; all are tunable at runtime (below).
+
+### Settings panel
+
+Long-press the button (or tap it in the `onlySettings` mode) opens an in-app
+panel built from pure framework widgets — no app resources or code touched.
+The panel never exceeds 80% of the screen on either axis: at high DPI it
+rescales itself (fonts, buttons, sliders shrink proportionally) instead of
+overflowing.
+
+| Control | What it does |
+|---------|--------------|
+| `metricsDpi` / `configDpi` | rendering / layout DPI steppers (160–560, step 20) |
+| **button size** | the floating button's `sizeDp` (24–96) |
+| **button alpha** | the floating button's transparency (10–100%) |
+| **button color** | 12-color Material palette, white ring marks the selection |
+| **Hide button / Show button** | hide the floating button — it goes invisible but stays attached, so a long-press on its (last) spot reopens this panel; taps on the invisible button do nothing |
+| **Restart app** | cold-restart so already-inflated views pick the new density up |
+| **Close** | dismiss the panel |
+
+- **size / alpha / color apply live** — the floating button updates instantly.
+- **DPI changes need a restart** to re-render already-inflated views. The panel
+  tracks whether you actually changed a DPI value: when you do, a soft orange
+  **Need restart** cue fades in above the buttons and **Restart app** lights up
+  orange; restore the values and both quietly return to normal.
+- Every change is persisted in the app's own `SharedPreferences` and survives
+  restarts — user-tuned values **override the embedded config** on the next
+  launch (the only runtime-configurable part of the adapter).
 
 ## Media bridge (Zeekr MediaCenter)
 
@@ -296,11 +336,17 @@ Multiple media apps register as **separate sources** — MediaCenter keys them b
 ```json
 {
   "metricsDpi": 280,
-  "configDpi": 240,
+  "configDpi": 280,
   "forceOrientation": true,
-  "backButton": { "enabled": true, "sizeDp": 48, "alpha": 0.5 },
+  "backButton": {
+    "enabled": true,
+    "sizeDp": 48,
+    "alpha": 0.5,
+    "color": "#4CAF50",
+    "onlySettings": false
+  },
   "roundedCorners": { "enabled": true, "radiusDp": 16 },
-  "fullscreen": true,
+  "fullscreen": false,
   "fontOverride": null,
   "userAgentOverride": "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
   "display": true,
@@ -317,6 +363,11 @@ Multiple media apps register as **separate sources** — MediaCenter keys them b
 ```
 
 **Config is embedded-only.** Read from `assets/dhu-adapter-config.json` inside the APK (via the APK zip at `instantiateClassLoader`, since `getAssets()` isn't ready that early). No `/sdcard` / `/data/local/tmp` paths — those were global and leaked one app's flags onto every patched app. To change flags, re-patch.
+
+**One runtime exception:** values changed in the floating button's [settings
+panel](#floating-button--settings-panel) persist in the app's
+`SharedPreferences` and override the embedded config on the next launch —
+no re-patch needed for per-app tuning (density, button look).
 
 ## Patching process (direct dex injection, no apktool)
 
@@ -362,7 +413,7 @@ zeekr-adapt/
 ├── src/com/dhuadapter/
 │   ├── DhuAdapterFactory.java      — AppComponentFactory orchestrator (populates HookEnv, calls each category)
 │   ├── DhuConfig.java              — embedded config loader (APK zip + assets)
-│   ├── BackButtonOverlay.java      — draggable floating back button
+│   ├── BackButtonOverlay.java      — draggable floating back button + in-app settings panel (DPI/size/alpha/color, runtime overrides)
 │   ├── RoundedCornersProvider.java — ViewOutlineProvider
 │   ├── core/
 │   │   ├── HookEnv.java            — shared static holder (config, appContext, classLoader, mediaBridge)

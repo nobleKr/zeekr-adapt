@@ -148,7 +148,9 @@ public final class DisplayHooks {
 
     // Early density points: apply metrics BEFORE Application.onCreate and on the
     // earliest ContextWrapper, so the app sees our density from the very start.
-    // Both are pure android.* framework methods.
+    // Both are pure android.* framework methods. These are also the first points
+    // where a WORKING context exists — settings-panel runtime overrides are
+    // applied here (before pushMetrics), retried until one hook succeeds.
     private static void installEarlyDensityPoints() {
         // Instrumentation.callApplicationOnCreate(Application) — fires just before
         // Application.onCreate; push metrics onto the app's Resources first.
@@ -161,7 +163,11 @@ public final class DisplayHooks {
                     try {
                         if (f.args != null && f.args.length > 0
                                 && f.args[0] instanceof android.content.Context) {
-                            pushMetrics((android.content.Context) f.args[0]);
+                            android.content.Context ctx = (android.content.Context) f.args[0];
+                            if (HookEnv.config != null) {
+                                HookEnv.config.applyRuntimeOverrides(ctx);
+                            }
+                            pushMetrics(ctx);
                         }
                     } catch (Throwable t) { /* ignore */ }
                 }
@@ -171,6 +177,9 @@ public final class DisplayHooks {
         }
 
         // ContextWrapper.attachBaseContext(Context) — protected; resolve reflectively.
+        // The first fire is the Application itself; the passed base context is
+        // already usable for SharedPreferences, so runtime overrides load here —
+        // the earliest point they can.
         try {
             Method m = android.content.ContextWrapper.class.getDeclaredMethod(
                     "attachBaseContext", android.content.Context.class);
@@ -181,7 +190,11 @@ public final class DisplayHooks {
                     try {
                         if (f.args != null && f.args.length > 0
                                 && f.args[0] instanceof android.content.Context) {
-                            pushMetrics((android.content.Context) f.args[0]);
+                            android.content.Context ctx = (android.content.Context) f.args[0];
+                            if (HookEnv.config != null) {
+                                HookEnv.config.applyRuntimeOverrides(ctx);
+                            }
+                            pushMetrics(ctx);
                         }
                     } catch (Throwable t) { /* ignore */ }
                 }

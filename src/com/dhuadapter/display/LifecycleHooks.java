@@ -71,11 +71,13 @@ public final class LifecycleHooks {
                     // fast splash/UID-onboarding activity can resume while
                     // finishing, and adding a window to a dying activity token
                     // leaks it (WindowLeaked BackButtonView).
+                    // backButton.onlySettings=true switches the button to the
+                    // settings-only mode (digits instead of the arrow, tap
+                    // opens the menu instead of going back).
                     if (HookEnv.config.backButtonEnabled
                             && !activity.isFinishing()
                             && !overlays.containsKey(activity)) {
-                        BackButtonOverlay overlay = new BackButtonOverlay(
-                                HookEnv.config.backButtonSize, HookEnv.config.backButtonAlpha);
+                        BackButtonOverlay overlay = new BackButtonOverlay();
                         overlay.attach(activity);
                         overlays.put(activity, overlay);
                     }
