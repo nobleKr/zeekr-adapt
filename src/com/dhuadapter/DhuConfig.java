@@ -83,6 +83,12 @@ public final class DhuConfig {
     public boolean backButtonEnabled = true;
     public int backButtonSize = 48;    // dp
     public float backButtonAlpha = 0.5f;
+    // Circle color of the floating button (ARGB). Default: Material Green 500.
+    public int backButtonColor = 0xFF4CAF50;
+    // onlySettings=true: the button carries NO "back" functionality — tap (or
+    // long-press) opens the settings menu; it renders the current metricsDpi
+    // as digits instead of the arrow. Default false (tap = back).
+    public boolean backButtonOnlySettings = false;
 
     // Rounded corners
     public boolean roundedCornersEnabled = true;
@@ -202,6 +208,59 @@ public final class DhuConfig {
         return parseOrDefault(jsonStr);
     }
 
+    /**
+     * Apply the user-tuned runtime overrides persisted by the in-app settings
+     * panel (BackButtonOverlay) on top of the embedded config. Called once from
+     * the early display hooks (attachBaseContext / callApplicationOnCreate) —
+     * at instantiateApplication time the Application context is NOT yet
+     * attached, so SharedPreferences can't be read there. Retried on every
+     * early hook invocation until one succeeds (once = flag below); values
+     * changed in the settings menu thus survive app restarts. Only keys the
+     * user actually changed are applied; everything is clamped to a safe range.
+     */
+    public void applyRuntimeOverrides(android.content.Context ctx) {
+        if (ctx == null || runtimeOverridesLoaded) return;
+        try {
+            android.content.SharedPreferences p = ctx.getSharedPreferences(
+                    BackButtonOverlay.PREFS_NAME, android.content.Context.MODE_PRIVATE);
+            if (p.contains(BackButtonOverlay.KEY_METRICS_DPI)) {
+                metricsDpi = clamp(p.getInt(BackButtonOverlay.KEY_METRICS_DPI, metricsDpi), 160, 640);
+            }
+            if (p.contains(BackButtonOverlay.KEY_CONFIG_DPI)) {
+                configDpi = clamp(p.getInt(BackButtonOverlay.KEY_CONFIG_DPI, configDpi), 160, 640);
+            }
+            if (p.contains(BackButtonOverlay.KEY_SIZE_DP)) {
+                backButtonSize = clamp(p.getInt(BackButtonOverlay.KEY_SIZE_DP, backButtonSize), 24, 128);
+            }
+            if (p.contains(BackButtonOverlay.KEY_ALPHA)) {
+                backButtonAlpha = clamp(p.getFloat(BackButtonOverlay.KEY_ALPHA, backButtonAlpha), 0.05f, 1.0f);
+            }
+            if (p.contains(BackButtonOverlay.KEY_COLOR)) {
+                backButtonColor = p.getInt(BackButtonOverlay.KEY_COLOR, backButtonColor);
+            }
+            // Mark loaded ONLY on success — if the context wasn't attached yet
+            // (getSharedPreferences threw), a later early hook retries.
+            runtimeOverridesLoaded = true;
+            Log.i(TAG, "Runtime overrides applied: metricsDpi=" + metricsDpi
+                    + " configDpi=" + configDpi
+                    + " sizeDp=" + backButtonSize
+                    + " alpha=" + backButtonAlpha);
+        } catch (Exception e) {
+            Log.w(TAG, "applyRuntimeOverrides failed (will retry): " + e);
+        }
+    }
+
+    /** Set once applyRuntimeOverrides has successfully read the prefs. */
+    private boolean runtimeOverridesLoaded = false;
+
+    private static int clamp(int v, int min, int max) {
+        return v < min ? min : (v > max ? max : v);
+    }
+
+    private static float clamp(float v, float min, float max) {
+        return v < min ? min : (v > max ? max : v);
+    }
+
     /** Parse a config JSON string into a DhuConfig, or defaults if null/invalid. */
     private static DhuConfig parseOrDefault(String jsonStr) {
         DhuConfig cfg = new DhuConfig();
@@ -250,6 +309,16 @@ public final class DhuConfig {
                 cfg.backButtonEnabled = bb.optBoolean("enabled", cfg.backButtonEnabled);
                 cfg.backButtonSize = bb.optInt("sizeDp", bb.optInt("size", cfg.backButtonSize));
                 cfg.backButtonAlpha = (float) bb.optDouble("alpha", cfg.backButtonAlpha);
+                if (!bb.isNull("color")) {
+                    String col = bb.optString("color", null);
+                    if (col != null && !col.isEmpty()) {
+                        try {
+                            String hex = col.startsWith("#") ? col.substring(1) : col;
+                            cfg.backButtonColor = (int) (0xFF000000L | Long.parseLong(hex, 16));
+                        } catch (Exception ignore) { /* keep default color */ }
+                    }
+                }
+                cfg.backButtonOnlySettings = bb.optBoolean("onlySettings", cfg.backButtonOnlySettings);
             }
 
             JSONObject rc = json.optJSONObject("roundedCorners");

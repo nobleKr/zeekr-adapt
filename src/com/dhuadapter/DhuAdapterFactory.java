@@ -83,6 +83,11 @@ public class DhuAdapterFactory extends AppComponentFactory {
         // captured in instantiateClassLoader). Application.getAssets() isn't
         // usable this early, so we don't rely on it.
         HookEnv.config = DhuConfig.loadFromApk(apkSourceDir);
+        // NOTE: runtime overrides from the settings panel are NOT loaded here —
+        // the Application context isn't attached yet (attachBaseContext runs
+        // later), so SharedPreferences can't be read at this point. They are
+        // applied in DisplayHooks.installEarlyDensityPoints, at the earliest
+        // hook where a working context exists, BEFORE pushMetrics.
         DhuConfig config = HookEnv.config;
 
         // Pine init — PineConfig.debug MUST stay false. It enables Pine's own

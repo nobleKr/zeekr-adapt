@@ -5,7 +5,9 @@
   "backButton": {
     "enabled": true,
     "sizeDp": 48,
-    "alpha": 0.5
+    "alpha": 0.5,
+    "color": "#4CAF50",
+    "onlySettings": false
   },
   "roundedCorners": {
     "enabled": true,
