@@ -1042,6 +1042,20 @@ public final class MediaBridge {
     private PlaybackState ps() { MediaController mc = controller; return mc != null ? mc.getPlaybackState() : null; }
     private static String safe(String s) { return s == null ? "" : s; }
 
+    /** Human-readable app name for getAppName(): the application label from
+     *  PackageManager (what the widget shows as the source), falling back to the
+     *  package name only if the label can't be resolved. */
+    private String appLabel() {
+        try {
+            CharSequence l = appContext.getPackageManager()
+                    .getApplicationLabel(appContext.getApplicationInfo());
+            if (l != null && l.length() > 0) {
+                return l.toString();
+            }
+        } catch (Throwable ignored) { /* fall through */ }
+        return appContext.getPackageName();
+    }
+
     private String title(MediaMetadata m) { return m != null ? safe(m.getString(MediaMetadata.METADATA_KEY_TITLE)) : ""; }
     private String artist(MediaMetadata m) { return m != null ? safe(m.getString(MediaMetadata.METADATA_KEY_ARTIST)) : ""; }
     private String album(MediaMetadata m) { return m != null ? safe(m.getString(MediaMetadata.METADATA_KEY_ALBUM)) : ""; }
@@ -1392,7 +1406,7 @@ public final class MediaBridge {
                 case TX_PI_GET_SOURCE_TYPE: data.enforceInterface(DESC_PLAYBACK_INFO); replyInt(reply, ZK_SOURCE_TYPE_ONLINE); return true;
                 case TX_PI_GET_PLAYBACK_STATUS: data.enforceInterface(DESC_PLAYBACK_INFO); replyInt(reply, status(p)); return true;
                 case TX_PI_GET_ARTWORK: data.enforceInterface(DESC_PLAYBACK_INFO); replyUri(reply, resolveArtwork(m)); return true;
-                case TX_PI_GET_APP_NAME:data.enforceInterface(DESC_PLAYBACK_INFO); replyStr(reply, appContext.getPackageName()); return true;
+                case TX_PI_GET_APP_NAME:data.enforceInterface(DESC_PLAYBACK_INFO); replyStr(reply, appLabel()); return true;
                 case TX_PI_GET_PACKAGE_NAME: data.enforceInterface(DESC_PLAYBACK_INFO); replyStr(reply, appContext.getPackageName()); return true;
                 case TX_PI_GET_PLAYING_LIST_ID: data.enforceInterface(DESC_PLAYBACK_INFO); replyStr(reply, mediaId(m)); return true;
                 case TX_PI_GET_UUID:            data.enforceInterface(DESC_PLAYBACK_INFO); replyStr(reply, mediaId(m)); return true;
