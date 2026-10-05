@@ -83,6 +83,7 @@ public final class MediaBridge {
     private static final int TX_UPDATE_PLAYBACK_STATE   = 7;
     private static final int TX_UPDATE_CURRENT_SOURCE_TYPE = 9;   // updateCurrentSourceType(token,int) — needs focus
     private static final int TX_UPDATE_CURRENT_PROGRESS    = 11;  // updateCurrentProgress(token,long) — server fans out to cluster/dim/widget
+    private static final int TX_DECLARE_SUPPORT_COLLECT    = 16;  // declareSupportCollectTypes(token,int[]) — server forwards onCollect only to declared clients
     private static final int TX_UPDATE_PLAYLIST            = 10;  // updatePlaylist(token,int type,List<IMedia>) — needs focus; feeds center/dim "next up"
     private static final int ZK_MEDIA_LIST_TYPE_NORMAL     = 0;   // TYPE_MEDIA_LIST_NORMAL
     private static final int TX_GET_STATE_BINDER        = 0x21; // 33
@@ -201,6 +202,8 @@ public final class MediaBridge {
     private volatile boolean registered;
     private volatile boolean lastPlaying;        // edge-track PLAYING for requestPlay re-acquire
     private volatile boolean progressTicking;    // 1 Hz progress pump active (playing)
+    private volatile boolean collectDeclared;    // declareSupportCollectTypes sent for this registration
+    private volatile long collectDiagActions = -1L; // last actions value logged by the collect diagnostic
     private static final long PROGRESS_TICK_MS = 1000L;
 
     private volatile MediaController controller;
@@ -258,6 +261,7 @@ public final class MediaBridge {
             token = null;
             registered = false;
             progressTicking = false;
+            collectDeclared = false;
             main.removeCallbacks(progressTick);
         }
     };
@@ -438,6 +442,7 @@ public final class MediaBridge {
         main.postDelayed(new Runnable() { @Override public void run() { startProgressTicks(); } }, 1600);
         // Seed the "next up" list once focus has settled.
         main.postDelayed(new Runnable() { @Override public void run() { updatePlaylist(); } }, 1700);
+        main.postDelayed(new Runnable() { @Override public void run() { declareCollectIfSupported(); } }, 1800);
         // Seed the playing-edge tracker so the first onPlaybackStateChanged doesn't
         // re-fire requestPlay (focus already claimed above).
         PlaybackState p0 = ps();
@@ -533,6 +538,53 @@ public final class MediaBridge {
         progressTicking = false;
         main.removeCallbacks(progressTick);
         updateCurrentProgress(position(ps()));   // land the bar at the paused position
+    }
+
+    /**
+     * IMediaCenterSvc.declareSupportCollectTypes(16): token + int[] types. The
+     * server (CtrlCollectDelegate) forwards a widget/center favourite tap to
+     * IZeekrMusicClient.onCollect only for clients that declared the type, so
+     * without this the heart never reaches us. Declared only when the session
+     * really accepts a heart/thumb rating; otherwise the reason is logged once
+     * per actions value so it can be read off logcat.
+     */
+    private void declareCollectIfSupported() {
+        IBinder center = mediaCenterSvc;
+        IBinder tk = token;
+        if (!registered || collectDeclared || center == null || tk == null) {
+            return;
+        }
+        PlaybackState p = ps();
+        if (!supportsCollect(p)) {
+            long a = actions(p);
+            if (a != collectDiagActions) {
+                collectDiagActions = a;
+                MediaController mc = controller;
+                int rt = -1;
+                try { if (mc != null) { rt = mc.getRatingType(); } } catch (Throwable ignored) { /* keep -1 */ }
+                Log.i(TAG, "collect not declared: actions=0x" + Long.toHexString(a)
+                        + " ACTION_SET_RATING=" + ((a & PlaybackState.ACTION_SET_RATING) != 0L)
+                        + " ratingType=" + rt);
+            }
+            return;
+        }
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(DESC_CENTER);
+            data.writeStrongBinder(tk);
+            data.writeIntArray(new int[]{ ZK_COLLECTION_MUSIC });
+            center.transact(TX_DECLARE_SUPPORT_COLLECT, data, reply, 0);
+            reply.readException();
+            boolean ok = reply.readInt() != 0;
+            collectDeclared = ok;
+            Log.i(TAG, "declareSupportCollectTypes(MUSIC) -> " + ok);
+        } catch (Throwable t) {
+            Log.w(TAG, "declareSupportCollectTypes failed", t);
+        } finally {
+            reply.recycle();
+            data.recycle();
+        }
     }
 
     // ── Play queue -> server (updatePlaylist, code 10) ────────────────────────
@@ -954,6 +1006,7 @@ public final class MediaBridge {
         @Override public void onMetadataChanged(MediaMetadata metadata) { pushState(); }
         @Override public void onPlaybackStateChanged(PlaybackState state) {
             pushState(); requestPlayIfPlaying();
+            declareCollectIfSupported();
             if (state != null && state.getState() == PlaybackState.STATE_PLAYING) startProgressTicks();
             else stopProgressTicks();
         }
@@ -1134,13 +1187,31 @@ public final class MediaBridge {
         return (actions(p) & (ACTION_SET_REPEAT_MODE | ACTION_SET_SHUFFLE_MODE_ENABLED | ACTION_SET_SHUFFLE_MODE)) != 0L;
     }
     /** Favourite/collect supported iff the session accepts ACTION_SET_RATING. */
-    private boolean supportsCollect(PlaybackState p) { return (actions(p) & PlaybackState.ACTION_SET_RATING) != 0L; }
+    private boolean supportsCollect(PlaybackState p) {
+        return (actions(p) & PlaybackState.ACTION_SET_RATING) != 0L && favouriteRating(true) != null;
+    }
+    /** The session's own rating style mapped to a favourite toggle: HEART or
+     *  THUMB_UP_DOWN. Null when the session rates some other way (stars, %, none). */
+    private Rating favouriteRating(boolean on) {
+        MediaController mc = controller;
+        if (mc == null) { return null; }
+        try {
+            switch (mc.getRatingType()) {
+                case Rating.RATING_HEART:         return Rating.newHeartRating(on);
+                case Rating.RATING_THUMB_UP_DOWN: return Rating.newThumbRating(on);
+                default:                          return null;
+            }
+        } catch (Throwable t) { return null; }
+    }
     /** Currently favourited: the track carries a HEART user-rating that is set. */
     private boolean isCollected(MediaMetadata m) {
         if (m == null) { return false; }
         try {
             Rating r = m.getRating(MediaMetadata.METADATA_KEY_USER_RATING);
-            return r != null && r.isRated() && r.getRatingStyle() == Rating.RATING_HEART && r.hasHeart();
+            if (r == null || !r.isRated()) { return false; }
+            if (r.getRatingStyle() == Rating.RATING_HEART) { return r.hasHeart(); }
+            if (r.getRatingStyle() == Rating.RATING_THUMB_UP_DOWN) { return r.isThumbUp(); }
+            return false;
         } catch (Throwable t) { return false; }
     }
     /** Android MediaMetadata has no standard lyric key, so we expose none until a
@@ -1612,7 +1683,12 @@ public final class MediaBridge {
             return false;
         }
         try {
-            mc.getTransportControls().setRating(Rating.newHeartRating(isCollect));
+            Rating r = supportsCollect(ps()) ? favouriteRating(isCollect) : null;
+            if (r == null) {
+                Log.i(TAG, "onCollect ignored: session does not accept a heart/thumb rating");
+                return false;
+            }
+            mc.getTransportControls().setRating(r);
             return true;
         } catch (Throwable t) {
             Log.w(TAG, "collect(setRating) failed", t);
