@@ -1120,12 +1120,18 @@ public final class MediaBridge {
     // ── Capability getters, derived live from framework API (no hardcode) ──────
     // The media server reads these off our IMusicPlaybackInfo stub when it builds
     // its MediaPlayInfo snapshot, and the UI greys out controls accordingly.
+    // Repeat/shuffle action bits are not constants of the framework PlaybackState
+    // (only of androidx PlaybackStateCompat); sessions built on MediaSessionCompat
+    // pass them through in getActions() as these raw bits.
+    private static final long ACTION_SET_REPEAT_MODE          = 1L << 18;
+    private static final long ACTION_SET_SHUFFLE_MODE_ENABLED = 1L << 19;  // legacy
+    private static final long ACTION_SET_SHUFFLE_MODE         = 1L << 21;
     private long actions(PlaybackState p) { return p != null ? p.getActions() : 0L; }
     /** Seek-bar draggable iff the session advertises ACTION_SEEK_TO. */
     private boolean supportsDrag(PlaybackState p) { return (actions(p) & PlaybackState.ACTION_SEEK_TO) != 0L; }
     /** Repeat/shuffle switch iff the session advertises a repeat- or shuffle-mode action. */
     private boolean supportsLoopSwitch(PlaybackState p) {
-        return (actions(p) & (PlaybackState.ACTION_SET_REPEAT_MODE | PlaybackState.ACTION_SET_SHUFFLE_MODE)) != 0L;
+        return (actions(p) & (ACTION_SET_REPEAT_MODE | ACTION_SET_SHUFFLE_MODE_ENABLED | ACTION_SET_SHUFFLE_MODE)) != 0L;
     }
     /** Favourite/collect supported iff the session accepts ACTION_SET_RATING. */
     private boolean supportsCollect(PlaybackState p) { return (actions(p) & PlaybackState.ACTION_SET_RATING) != 0L; }
