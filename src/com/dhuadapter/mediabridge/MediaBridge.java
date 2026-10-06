@@ -1207,7 +1207,9 @@ public final class MediaBridge {
     private boolean isCollected(MediaMetadata m) {
         if (m == null) { return false; }
         try {
+            // Sessions publish the user's like either as USER_RATING or as RATING.
             Rating r = m.getRating(MediaMetadata.METADATA_KEY_USER_RATING);
+            if (r == null) { r = m.getRating(MediaMetadata.METADATA_KEY_RATING); }
             if (r == null || !r.isRated()) { return false; }
             if (r.getRatingStyle() == Rating.RATING_HEART) { return r.hasHeart(); }
             if (r.getRatingStyle() == Rating.RATING_THUMB_UP_DOWN) { return r.isThumbUp(); }
