@@ -124,7 +124,11 @@ public final class MediaBridge {
     private static final int TX_MC_ON_PREVIOUS  = 4;
     private static final int TX_MC_ON_FORWARD   = 5;
     private static final int TX_MC_ON_REWIND    = 6;
-    private static final int TX_MC_ON_COLLECT   = 0xf;  // 15 onCollect(int type, boolean isCollect)
+    private static final int TX_MC_ON_COLLECT   = 0xf;  // 15 onCollect(int type, boolean isCollect) — VR path
+    private static final int TX_MC_CTRL_COLLECT = 32;   // ctrlCollect(int type, boolean) -> int — widget V1 path
+    private static final int TX_MC_OPERATION_TYPE = 33; // operationType(int) — server calls it before collect
+    private static final int TX_MC_CTRL_COLLECT_ASYNC = 45; // ctrlCollectAsync(from, displayId, type, boolean, IZeekrPlatformCallback) -> boolean — widget V2 path
+    private static final String DESC_PLATFORM_CB = "com.zeekr.sdk.base.internal.IZeekrPlatformCallback";
     private static final int TX_MC_GET_PLAYBACK_INFO = 0xa;
     private static final int TX_MC_GET_SOURCE_TYPE_LIST    = 11;  // -> int[] (createIntArray)
     private static final int TX_MC_GET_CURRENT_SOURCE_TYPE = 12;  // -> int
@@ -1421,6 +1425,30 @@ public final class MediaBridge {
                 case TX_MC_ON_PREVIOUS: data.enforceInterface(DESC_MUSIC_CLIENT); replyOk(reply, transport(TransportOp.PREV, 0)); return true;
                 case TX_MC_ON_FORWARD:  data.enforceInterface(DESC_MUSIC_CLIENT); replyOk(reply, transport(TransportOp.FORWARD, 0)); return true;
                 case TX_MC_ON_REWIND:   data.enforceInterface(DESC_MUSIC_CLIENT); replyOk(reply, transport(TransportOp.REWIND, 0)); return true;
+                case TX_MC_CTRL_COLLECT: {           // widget favourite tap (V1)
+                    data.enforceInterface(DESC_MUSIC_CLIENT);
+                    data.readInt();                       // collect type
+                    boolean on = data.readInt() != 0;
+                    replyOk(reply, collect(on));          // widget treats > 0 as success
+                    return true;
+                }
+                case TX_MC_CTRL_COLLECT_ASYNC: {     // widget favourite tap (V2, multi-display)
+                    data.enforceInterface(DESC_MUSIC_CLIENT);
+                    data.readInt();                       // from
+                    data.readInt();                       // displayId
+                    data.readInt();                       // collect type
+                    boolean on = data.readInt() != 0;
+                    IBinder cb = data.readStrongBinder();
+                    boolean ok = collect(on);
+                    replyOk(reply, ok);
+                    notifyCtrlOp(cb, "playCtrlCollectV2", ok);
+                    return true;
+                }
+                case TX_MC_OPERATION_TYPE:
+                    data.enforceInterface(DESC_MUSIC_CLIENT);
+                    data.readInt();
+                    if (reply != null) { reply.writeNoException(); }
+                    return true;
                 case TX_MC_ON_COLLECT: {
                     data.enforceInterface(DESC_MUSIC_CLIENT);
                     int type = data.readInt();            // collect type (0=music) — not needed
@@ -1698,6 +1726,36 @@ public final class MediaBridge {
         } catch (Throwable t) {
             Log.w(TAG, "collect(setRating) failed", t);
             return false;
+        }
+    }
+
+    /**
+     * Report the result of an async widget control back through the
+     * IZeekrPlatformCallback the widget passed (oneway onCall, code 1). Payload is
+     * ZeekrPlatformCallbackMessage{method, protobuf OnWidgetCtrlOpPois{1:code, 2:message}}.
+     * The widget requires a non-null message, so one is always sent.
+     */
+    private static void notifyCtrlOp(IBinder cb, String method, boolean ok) {
+        if (cb == null) {
+            return;
+        }
+        byte[] msg = (ok ? "ok" : "unsupported").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        java.io.ByteArrayOutputStream pb = new java.io.ByteArrayOutputStream();
+        pb.write(0x08); pb.write(ok ? 1 : 0);           // field 1 code (varint): 1 = success
+        pb.write(0x12); pb.write(msg.length);           // field 2 message (length-delimited)
+        pb.write(msg, 0, msg.length);
+        Parcel data = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(DESC_PLATFORM_CB);
+            data.writeInt(1);                            // non-null ZeekrPlatformCallbackMessage
+            data.writeString(method);                    // mMethod
+            data.writeByteArray(pb.toByteArray());       // mMethodParam
+            data.writeByteArray(null);                   // mAttachParam
+            cb.transact(1, data, null, IBinder.FLAG_ONEWAY);
+        } catch (Throwable t) {
+            Log.w(TAG, "notifyCtrlOp failed", t);
+        } finally {
+            data.recycle();
         }
     }
 
