@@ -578,7 +578,9 @@ public final class MediaBridge {
             reply.readException();
             boolean ok = reply.readInt() != 0;
             collectDeclared = ok;
-            Log.i(TAG, "declareSupportCollectTypes(MUSIC) -> " + ok);
+            int rt = -1;
+            try { MediaController mc = controller; if (mc != null) { rt = mc.getRatingType(); } } catch (Throwable ignored) { /* keep -1 */ }
+            Log.i(TAG, "declareSupportCollectTypes(MUSIC) -> " + ok + " ratingType=" + rt);
         } catch (Throwable t) {
             Log.w(TAG, "declareSupportCollectTypes failed", t);
         } finally {
@@ -1188,20 +1190,20 @@ public final class MediaBridge {
     }
     /** Favourite/collect supported iff the session accepts ACTION_SET_RATING. */
     private boolean supportsCollect(PlaybackState p) {
-        return (actions(p) & PlaybackState.ACTION_SET_RATING) != 0L && favouriteRating(true) != null;
+        return (actions(p) & PlaybackState.ACTION_SET_RATING) != 0L;
     }
-    /** The session's own rating style mapped to a favourite toggle: HEART or
-     *  THUMB_UP_DOWN. Null when the session rates some other way (stars, %, none). */
+    /** Favourite toggle in the session's own rating style: a thumb rating when the
+     *  session declares THUMB_UP_DOWN, a heart rating otherwise (including when the
+     *  reported rating type is NONE or cannot be read). */
     private Rating favouriteRating(boolean on) {
         MediaController mc = controller;
         if (mc == null) { return null; }
         try {
             switch (mc.getRatingType()) {
-                case Rating.RATING_HEART:         return Rating.newHeartRating(on);
                 case Rating.RATING_THUMB_UP_DOWN: return Rating.newThumbRating(on);
-                default:                          return null;
+                default:                          return Rating.newHeartRating(on);
             }
-        } catch (Throwable t) { return null; }
+        } catch (Throwable t) { return Rating.newHeartRating(on); }
     }
     /** Currently favourited: the track carries a HEART user-rating that is set. */
     private boolean isCollected(MediaMetadata m) {
@@ -1691,6 +1693,7 @@ public final class MediaBridge {
                 return false;
             }
             mc.getTransportControls().setRating(r);
+            Log.i(TAG, "onCollect(" + isCollect + ") -> setRating " + r);
             return true;
         } catch (Throwable t) {
             Log.w(TAG, "collect(setRating) failed", t);
