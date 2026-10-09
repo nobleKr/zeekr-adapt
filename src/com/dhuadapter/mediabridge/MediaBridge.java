@@ -1210,12 +1210,24 @@ public final class MediaBridge {
         } catch (Throwable t) { return Rating.newHeartRating(on); }
     }
     /** Currently favourited: the track carries a HEART user-rating that is set. */
+    private volatile String lastCollectDiag;
     private boolean isCollected(MediaMetadata m) {
+        boolean res = isCollectedRaw(m);
+        // Diagnostic: log what the session publishes, only when it changes.
+        try {
+            String d = "USER_RATING=" + (m != null ? m.getRating(MediaMetadata.METADATA_KEY_USER_RATING) : null)
+                    + " RATING=" + (m != null ? m.getRating(MediaMetadata.METADATA_KEY_RATING) : null)
+                    + " -> isCollected=" + res;
+            if (!d.equals(lastCollectDiag)) { lastCollectDiag = d; Log.i(TAG, "collect state: " + d); }
+        } catch (Throwable ignored) { /* diagnostics only */ }
+        return res;
+    }
+    private boolean isCollectedRaw(MediaMetadata m) {
         if (m == null) { return false; }
         try {
-            // Sessions publish the user's like either as USER_RATING or as RATING.
+            // The user's own like is USER_RATING. RATING is the item's overall
+            // rating, not the user's like — reading it inverted the widget icon.
             Rating r = m.getRating(MediaMetadata.METADATA_KEY_USER_RATING);
-            if (r == null) { r = m.getRating(MediaMetadata.METADATA_KEY_RATING); }
             if (r == null || !r.isRated()) { return false; }
             if (r.getRatingStyle() == Rating.RATING_HEART) { return r.hasHeart(); }
             if (r.getRatingStyle() == Rating.RATING_THUMB_UP_DOWN) { return r.isThumbUp(); }
@@ -1429,6 +1441,7 @@ public final class MediaBridge {
                     data.enforceInterface(DESC_MUSIC_CLIENT);
                     data.readInt();                       // collect type
                     boolean on = data.readInt() != 0;
+                    Log.i(TAG, "widget ctrlCollect(isCollect=" + on + ")");
                     replyOk(reply, collect(on));          // widget treats > 0 as success
                     return true;
                 }
@@ -1439,6 +1452,7 @@ public final class MediaBridge {
                     data.readInt();                       // collect type
                     boolean on = data.readInt() != 0;
                     IBinder cb = data.readStrongBinder();
+                    Log.i(TAG, "widget ctrlCollectAsync(isCollect=" + on + ")");
                     boolean ok = collect(on);
                     replyOk(reply, ok);
                     notifyCtrlOp(cb, "playCtrlCollectV2", ok);
